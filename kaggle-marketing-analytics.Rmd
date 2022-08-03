@@ -1,0 +1,703 @@
+---
+title: "Kaggle Marketing Analytics"
+author: 
+date: 
+output: 
+  html_document:
+    code_folding: hide 
+
+---
+<style type="text/css">
+  h1{
+  font-size: 13pt;
+  }
+  h2{
+  font-size: 12pt;
+  font-weight: bold;
+  text-align: center;
+  }
+  h3{
+  font-size: 12pt;
+  font-style: italic;
+  font-weight: bold;
+  text-decoration: underline;
+}
+ h4{
+  font-size: 10pt;
+  font-weight: bold;
+}
+  body{
+  font-size: 10pt;
+}
+</style>
+```{r, include=FALSE}
+options(width = 60)
+local({
+  hook_output <- knitr::knit_hooks$get('output')
+  knitr::knit_hooks$set(output = function(x, options) {
+    if (!is.null(options$max.height)) options$attr.output <- c(
+      options$attr.output,
+      sprintf('style="max-height: %s;"', options$max.height)
+    )
+    hook_output(x, options)
+  })
+})
+```
+
+## Section 01: Exploratory Data Analysis
+### Are there any null values or outliers? How will you wrangle/handle them? Are there any variables that warrant transformations? Do you notice any patterns or anomalies in the data? Can you plot them?
+  
+#### 1. Read in the csv file & take a look at all the variables
+```{r message= FALSE, warning= FALSE,error=FALSE,max.height='200px'}
+#Read in the csv file
+df<-read.csv("../input/marketing-data/marketing_data.csv")
+
+#Take a look at all the variables
+library(Hmisc)
+summary(df)
+#Hmisc::describe(data)
+```
+#### 2. Made the following changes to data
+- make Dt_customer a date column
+- make Income numeric
+- Extract Age of Customers, if current year= 2020
+```{r message= FALSE, warning= FALSE,error=FALSE}
+#make Dt_customer a date column
+library(lubridate)
+df$Dt_Customer<-as.Date(parse_date_time(df$Dt_Customer,"mdy"))
+print("Date")
+summary(df$Dt_Customer)
+
+#make income numeric
+library(dplyr)
+df$Income<-as.numeric(df$Income%>%gsub("[$,]","",.))
+print("Income")
+summary(df$Income)
+
+#Extract Age of Customers, if current year= 2020
+df<-mutate(df, Age=2020-df$Year_Birth)
+print("Age")
+summary(df$Age)
+```
+  
+  
+#### 3. Count number of NAs in the data
+```{r message= FALSE, warning= FALSE,error=FALSE}
+sum(is.na(df))
+```
+#### Observation:
+- All NAs come from Income column  
+  
+  
+#### 4. Visual Representation of outliers for all numerical columns
+```{r message= FALSE, warning= FALSE,error=FALSE}
+#Visual representation of outliers for numerical variables
+library(tidyr)
+df_num<-select_if(df,is.numeric)%>%select(-ID)
+df_num_p<-df_num%>%gather(variable,values,1:24 )
+df_num_p%>%ggplot()+
+  geom_boxplot(aes(x=variable,y=values)) + 
+  facet_wrap(~variable,ncol=6,scales="free") + 
+  theme(strip.text.x = element_blank(),
+        text = element_text(size=9))  
+```
+  
+#### Observations: 
+- The outliers at "Age" column looks suspicious as there are people who live over 125 years old.  
+- There are data points with especially high income  
+  
+  
+#### 5. Plot Age & Income
+```{r message= FALSE, warning= FALSE,error=FALSE}
+library(ggplot2)
+library(gridExtra)
+library(cowplot)
+Income_age<-df%>% select(.,Income,Age)%>%
+  group_by(Age)%>%summarise(Income=mean(Income))%>%
+  mutate(Outliers=ifelse(Age>100,1,0))
+
+#Bar Plot
+p1<-Income_age%>%ggplot(aes(x=Age,y=Income))+
+  geom_col(aes(fill=Outliers))+ 
+  scale_y_continuous(labels=scales::dollar)+
+  ggtitle("Mean Income by Age")+
+  theme(legend.title=element_blank())
+
+#Box Plot
+p2<-Income_age%>%ggplot(aes(x=Age,y=Income))+ 
+  geom_boxplot(fill="#666699")
+
+grid.arrange(p1,p2,ncol=1)  
+```
+  
+#### Observation:  
+- There is a Huge gap in the age group, need to remove outliers where Age>100    
+  
+  
+#### 6. Remove datapoints where Age>100 & Remove datapoints where Income = NA
+```{r message= FALSE, warning= FALSE,error=FALSE}
+#Remove datapoints where Age>100
+paste0("Number of Datapoints removed for Age>100: ",count(df%>%filter(.,Age>100)))
+df<-df%>%filter(.,Age<100)
+summary(df$Age)
+
+#Remove datapoints where Income = NA
+paste0("Number of Datapoints removed Income=NA: ",count(df%>%filter(.,is.na(Income))))
+df<-df%>%filter(.,!is.na(Income))
+```
+
+### Are there any useful variables that you can engineer with the given data?  
+#### 7. Generate Useful Variables
+- Total Amount Spent= MntWines+MntFruits+MntMeatProducts+MntFishProducts+MntSweetProducts+MntGoldProds
+- Total Campaigns Accepted= AcceptedCmp1+ AcceptedCmp2 +AcceptedCmp3+ AcceptedCmp4+ AcceptedCmp5
+- Total Number Of Purchases= NumDealsPurchases+NumCatalogPurchases+NumStorePurchases+NumWebPurchases
+- Number of Dependents= Kidhome+ Teenhome
+- Number of Years as Customers= 2020- Dt_Customer
+```{r message= FALSE, warning= FALSE,error=FALSE}
+#Total Amount Spent
+df<-df%>%mutate(df,Total_amt_spent= MntWines+ MntFruits+ MntMeatProducts+ MntFishProducts+ MntSweetProducts+ MntGoldProds)
+print("Total_amt_spent")
+summary(df$Total_amt_spent)
+
+#Total Campaigns Accepted
+df<-df%>%mutate(df,Num_campaigns_Accepted= AcceptedCmp1+ AcceptedCmp2 +AcceptedCmp3+ AcceptedCmp4+ AcceptedCmp5)
+print('Num_campaigns_Accepted')
+summary(df$Num_campaigns_Accepted)
+
+#Total Number of Purchases
+df<-df%>%mutate(df,Num_purchases= NumDealsPurchases+ NumCatalogPurchases+ NumStorePurchases+ NumWebPurchases)
+print("Num_purchases")
+summary(df$Num_purchases)
+
+#Number of Dependents
+df<-df%>%mutate(df,Num_dependents= Kidhome+ Teenhome)
+print("Num_dependents")
+summary(df$Num_dependents)
+
+#Num_year joined if current year 2020
+df<-df%>%mutate(df, Num_years= 2020- year(Dt_Customer))
+print("Num_year_joined")
+summary(df$Num_years)
+```
+## Section 2: Statistical Analysis  
+### What factors are significantly related to the number of store purchases? 
+#### Steps: Perform Linear Regression: 
+- Drop irrelevant columns 
+- Get an overview of the Y-variable (NumStorePurchases)
+- Visualise correlation between variables
+- Removed highly correlated Variables
+- Represents categorical variables as numeric variables
+- Split data into train & test datasets
+- Perform linear regression
+- Retrieve significant X-variables based on p-values & Visualise their importance
+- Calculate RMSE value & R-Square Value on Test dataset
+- Remove non-significant X-variables and repeat linear regression 
+
+
+#### Drop irrelevant columns
+- ID: irrelevant to the analysis
+- Year of Birth: equivalent to the Age columns
+- Date: equivalent to the Number of years column
+```{r message= FALSE, warning= FALSE,error=FALSE}
+df_regress<-df%>%select(-ID,-Year_Birth,-Dt_Customer)
+```
+#### Overview of the Y-Variable : Num Store Purchase
+```{r message= FALSE, warning= FALSE,error=FALSE}
+summary(df$NumStorePurchases)
+p1<-df_regress%>%ggplot(aes(NumStorePurchases))+
+  geom_histogram(fill="#666699")+
+  scale_x_continuous(n.breaks=13)+
+  ggtitle("Frequency of Number of Store Purchases")+
+  ylab("Frequency")  
+
+p2<-df_regress%>%ggplot(aes(y=NumStorePurchases))+ 
+  geom_boxplot(fill="#666699")+ 
+  theme(axis.ticks.x=element_blank(),
+        axis.text.x = element_blank())
+
+grid.arrange(p1,p2,ncol=1)
+```
+  
+#### Observation:  
+- Most individuals purchase about 3 items from the store. The frequency decreases as the number of store purchases increases.  
+- Mean number of store purchases are 5.
+  
+  
+#### Perform Linear Regression  
+  
+#### Visualize Correlation
+```{r message= FALSE, warning= FALSE,error=FALSE}
+library(caret)
+df1<-select_if(df_regress,is.numeric)
+correlation_matrix<-cor(df1)
+
+#Visualise correlation in heatmap
+col<- colorRampPalette(c("blue", "white", "red"))(20)
+heatmap(correlation_matrix, col=col, symm=TRUE)   
+```
+  
+#### Observations:  
+- Highly positively correlated variables are in Red and Highly negatively correlated variables are in Blue.  
+- We could see that income are positively correlated to Number of purchases and the amount of purchases.  
+- The different kind of purchases such as Meat purchases/ Sweet purchases/ Fish purchases/ Fruit purchases tend to be positively correlated to one another.  
+- There are negative correlations between having kids/ dependents at home and the amount or number of purchases.   
+  
+  
+#### Drop Highly correlated variables  
+```{r message= FALSE, warning= FALSE,error=FALSE}
+drop=findCorrelation(correlation_matrix,cutoff=0.8)
+drop= c(drop)
+corrdf<-data.frame(correlation_matrix)
+col_drop<-corrdf%>%dplyr::select(drop)%>%colnames()
+df_regress<-df_regress%>%select(-col_drop)
+paste0("Columns dropped: ", col_drop)  
+```
+  
+  
+#### Numeric labeling: Convert to numerical representation
+```{r message= FALSE, warning= FALSE,error=FALSE}
+#retrieve all non-numeric columns and represent these factors as integers.
+library(tidyverse)
+cat_var<-df_regress%>%select_if(negate(is.numeric))%>%colnames()
+paste0("Categorical Variables : ", cat_var)
+## [1] "Education"      "Marital_Status" "Country"
+
+df_regress$Education1<-as.integer(factor(df_regress$Education))
+df_regress%>%distinct(Education,Education1)
+
+df_regress$Marital_Status1<-as.integer(factor(df_regress$Marital_Status))
+df_regress%>%distinct(Marital_Status,Marital_Status1)
+
+df_regress$Country1<-as.integer(factor(df_regress$Country))
+df_regress%>%distinct(Country,Country1)
+
+df_regress1<-df_regress%>%select(-Education,-Marital_Status,-Country,-Num_campaigns_Accepted,-Num_dependents)  
+```
+  
+  
+#### Split data into training (70%) & test datasets (30%)
+```{r message= FALSE, warning= FALSE,error=FALSE}
+library(caTools)
+set.seed(123)
+df_regress1$spl<-sample.split(df_regress1$NumStorePurchases,SplitRatio = 0.7)
+train_df<-df_regress1%>%filter(spl==TRUE)%>%select(-spl)
+test_df<-df_regress1%>%filter(spl==FALSE)%>%select(-spl)
+paste0("Number of rows in train dataset: ",nrow(train_df))
+paste0("Number of rows in test dataset: ",nrow(test_df))
+```
+  
+  
+#### Perform Linear Regression & Interpret Results
+  
+#### Regression Results
+```{r message= FALSE, warning= FALSE,error=FALSE,max.height='300px'}
+m1<-lm(NumStorePurchases~.,data=train_df)
+summary(m1)
+```
+  
+  
+#### Plotting of all X-Variables' P-value
+```{r message= FALSE, warning= FALSE,error=FALSE}
+#Retrieve all the p-values
+pvaluedf<-data.frame(summary(m1)$coefficients[,c('Pr(>|t|)','Estimate')])
+colnames(pvaluedf)<-c('pvalue','coefficient')
+pvaluedf$variables<-rownames(pvaluedf)
+
+#Plot the variables and their significance 
+pvaluedf%>%ggplot(aes(x=reorder(variables,pvalue),y=pvalue))+
+  geom_col(fill="#666699")+
+  theme(axis.text.x=element_text(angle=90,hjust=1))+
+  geom_hline(yintercept=0.05,color="red")+
+  geom_text(aes(x=2,y=0.10),label="5%",color="red")+
+  scale_x_discrete(name="X-Variables")+
+  ggtitle("X-Variables and their P-Values")
+
+
+```
+  
+#### The table below shows the top 5 significant X-variables for NumStorePurchase
+```{r message= FALSE, warning= FALSE,error=FALSE}
+#Top 5 significant variables based on p-values (significance level at 5%) 
+pvaluedf%>%arrange(pvalue)%>%select(pvalue,coefficient)%>%slice(1:6)
+
+#Calculate RMSE Value
+predictions<-predict(m1,test_df)
+paste0("RMSE: ",RMSE(predictions,test_df$NumStorePurchases))
+
+#R-square on training dataset
+paste0("R-square value on train dataset is: " ,round(summary(m1)$r.squared,digits=5))
+
+#Error Sum of Squares
+SSE<- sum((predictions-test_df$NumStorePurchases)^2)
+#Sum of Square Total
+SST<- sum((mean(train_df$NumStorePurchases)-test_df$NumStorePurchases)^2)
+#R-Square 
+r_square<-1-SSE/SST
+paste0("R-square value on test dataset is: ", round(r_square,5))
+
+```
+  
+#### Plot the 5 significant X-variables with the Y-variable
+```{r message= FALSE, warning= FALSE,error=FALSE}
+library(gtable)
+p1<-df_regress1%>%
+  select(NumStorePurchases, NumWebPurchases, NumWebVisitsMonth, NumDealsPurchases)%>%
+  gather(.,var,value,'NumWebPurchases':'NumDealsPurchases')%>%
+  group_by(NumStorePurchases,var)%>%
+  summarise_all(funs(mean))%>%
+  ggplot(aes(x=NumStorePurchases,y=value,fill=var))+
+  geom_col(position="dodge2")+ 
+  scale_x_continuous(n.breaks = 11)+
+  theme(legend.position="bottom",
+        plot.title = element_text(size = 10,face = "bold"),
+        text=element_text(size=9))+
+  scale_fill_brewer(palette = "Dark2")+
+  ggtitle("Mean number of X-variables and NumStorePurchases")
+
+p2<-df_regress1%>%
+  select(NumStorePurchases,MntWines)%>%
+  group_by(NumStorePurchases)%>%
+  summarise(MntWines=mean(MntWines))%>%
+  ggplot(aes(x=NumStorePurchases,y=MntWines))+
+  geom_col(fill="#666699",width=0.4)+
+  theme(legend.position="none")+
+  scale_x_continuous(n.breaks = 11)+
+  scale_y_continuous(label=scales::dollar)+
+  ggtitle("Mean amount of Wine Purchases and NumStorePurchases")+
+  theme(plot.title = element_text(size = 10,face = "bold"),
+        text=element_text(size=9))
+
+p3<-df_regress1%>%
+  ggplot(aes(x=factor(Kidhome),y=NumStorePurchases))+
+  geom_boxplot()+
+  scale_x_discrete(limits=c("0", "1","2"))+ 
+  xlab("Number of Kids")+
+  ggtitle("Number of kids and \n Mean NumStorePurchases")+
+  theme(plot.title = element_text(size = 10,face = "bold"),
+        text=element_text(size=9))
+
+grid.arrange(p2,p3,p1, ncol=2,widths=c(2,1),heights=c(1.5,2))
+```
+  
+#### Observation:
+- Amount spent on Wines increases as the Number of Store Purchases increases
+- Number of Web Purchases increases as the Number of Store Purchases increases
+- Number of Web Visits decreases as the Number of Store Purchases increases
+- Mean Number of Store Purchases decreases when there are kids
+- These observations suppors the regression model result which indicates positive coefficients for MntWines, NumWebPurchases and negative coefficients for KidHome and NumWebVisitsMonth
+  
+  
+#### Remove some non-significant X-variables and improve regression model
+```{r message= FALSE, warning= FALSE,error=FALSE,max.height='300px'}
+
+m2<-lm(NumStorePurchases~ .-AcceptedCmp4-Teenhome ,data=train_df)
+summary(m2)
+
+#Calculate RMSE Value
+predictions2<-predict(m2,test_df)
+paste0("RMSE: ",RMSE(predictions2,test_df$NumStorePurchases))
+
+#R-square on training dataset
+paste0("R-square value on train dataset is: " ,round(summary(m2)$r.squared,digits=5))
+
+#Error Sum of Squares
+SSE<- sum((predictions2-test_df$NumStorePurchases)^2)
+#Sum of Square Total
+SST<- sum((mean(train_df$NumStorePurchases)-test_df$NumStorePurchases)^2)
+#R-Square 
+r_square<-1-SSE/SST
+paste0("R-square value on test dataset is: ", round(r_square,5))
+```
+#### Observations:
+- When the two X-variables of the highest p-value are removed, the R-square value  for both train and test dataset increases. 
+- This shows that the second regression model is better. 
+  
+  
+### Does US fare significantly better than the Rest of the World in terms of total purchases?
+  
+#### Visualise Number of Purchases and Amt of Purchases across Countries
+```{r message= FALSE, warning= FALSE,error=FALSE}
+
+p1<-df%>%select(Num_purchases, Total_amt_spent, Country)%>%
+  group_by(Country)%>%
+  summarise_all(funs(sum))%>%
+  ggplot(aes(x=Country,y=Num_purchases))+
+  geom_col(fill="#666699",width=0.4)+
+  geom_line(aes(x=Country,y=Total_amt_spent/20,group=1),col="#000000")+
+  xlab("Country")+
+  scale_y_continuous(name="Total Number of Purchases",
+                   sec.axis= sec_axis(trans=~.*20,
+                                      name="Total Amount of purchases",
+                                      labels=scales::dollar))+
+  ggtitle("Total Number and Amount of purchases across all Countries")+
+  theme(plot.title = element_text(size = 10,face = "bold"),
+        text=element_text(size=9))
+
+p2<-df%>%select(Num_purchases, Total_amt_spent, Country)%>%
+  group_by(Country)%>%
+  summarise_all(funs(mean))%>%
+  ggplot(aes(x=Country,y=Num_purchases))+
+  geom_col(fill="#666699",width=0.4)+
+  geom_line(aes(x=Country,y=Total_amt_spent/30,group=1),col="#000000")+
+  xlab("Country")+
+  scale_y_continuous(name="Mean Number of Purchases",
+                   sec.axis= sec_axis(trans=~.*30,
+                                      name="Mean Amount of purchases",
+                                      labels=scales::dollar))+
+  ggtitle("Mean Number and Amount of purchases across all Countries")+
+  theme(plot.title = element_text(size = 10,face = "bold"),
+        text=element_text(size=9))
+
+grid.arrange(p1,p2,ncol=1)
+```
+  
+#### Observations:
+- Looking at the Total purchases, US is ranked the third lowest in terms of Number of purchases, it is also one of the lowest in terms of the total amount of purchases
+- Looking at the Mean purchases, all countries except for ME have around the same number and amount of purhases
+- Hence, we can conclude that US does not fare significantly better than the Rest of the World.
+  
+  
+### Your supervisor insists that people who buy gold are more conservative. Therefore, people who spent an above average amount on gold in the last 2 years would have more in store purchases. Justify or refute this statement using an appropriate statistical test
+  
+#### Perform T-test
+- Split dataset into 2 groups, above average and below Gold Spending average
+- Visualisations via plots
+- Conduct t-test: Null hypothesis= There is no difference in number of store purchases in the two groups (those spent above average on gold products & those spent below average on gold products)
+- Evaluate Results
+  
+#### Split data into above & below average
+```{r message= FALSE, warning= FALSE,error=FALSE}
+#Split dataset into 2 groups, above average and below average
+df<-mutate(df,Gold_spending=ifelse(MntGoldProds>mean(MntGoldProds),"Above_avg","Below_avg"))
+describe(df$Gold_spending)
+```
+#### Visualisations of Gold Spending
+```{r message= FALSE, warning= FALSE,error=FALSE}
+Gold_df<-df%>%select(MntGoldProds,NumStorePurchases)%>%group_by(NumStorePurchases)%>%summarise(Avg_Gold_Spending= mean(MntGoldProds))%>% mutate(.,Type=ifelse(Avg_Gold_Spending>mean(df$MntGoldProds),"Above_avg","Below_avg"))
+
+p1<-Gold_df%>%ggplot(aes(x=NumStorePurchases,y=Avg_Gold_Spending,fill=Type))+
+  geom_col()+
+  scale_x_continuous(n.breaks = 11)+
+  theme(legend.position = "bottom")+
+  scale_fill_brewer(palette = "Paired")+
+  ggtitle("Number of Store Purchases and Gold Spending")+
+  theme(plot.title = element_text(size = 9,face = "bold"),
+        text=element_text(size=8.5))
+
+p2<-Gold_df%>%ggplot(aes(x=Type,y=NumStorePurchases,fill=Type))+
+  geom_boxplot()+
+  theme(legend.position = "bottom")+
+  scale_fill_brewer(palette = "Paired")+
+  ggtitle("")+
+  theme(plot.title = element_text(size = 9,face = "bold"),
+        text=element_text(size=8.5))
+
+grid.arrange(p1,p2,ncol=2)
+```
+  
+#### Observations:
+- Those who spend above average on Gold products have higher number of store purchases than those who spend below average.
+  
+#### Conduct T-test
+```{r message= FALSE, warning= FALSE,error=FALSE}
+stat_test<-t.test(NumStorePurchases~Gold_spending,data=df)
+stat_test
+stat_test$p.value
+```
+#### Results:
+- Since the p-value is less than 0.05, this shows that there are sufficient evidence to reject the null hypothesis.
+- Therefore, those who spent above average on gold products indeed have more store purchases. 
+  
+  
+### Fish has Omega 3 fatty acids which are good for the brain. Accordingly, do “Married PhD candidates” have a significant relation with amount spent on fish? What other factors are significantly related to amount spent on fish? (Hint: use your knowledge of interaction variables/effects)
+  
+#### Perform Linear regression
+- Run Anova Test
+- Run Linear Regression Model
+- Retrieve variables’ p-value
+- Plot their significance
+- Calculate RMSE value & R-Square Value on test dataset
+  
+  
+#### Run Anova Test  
+```{r message= FALSE, warning= FALSE,error=FALSE}
+df_regress<-df_regress%>%select(-Education1,-Country1,-Marital_Status1)
+#Run Anova Test
+anova_married<-aov(MntFishProducts~Marital_Status*Education,data=df_regress)
+summary(anova_married)
+```
+#### Observations:  
+- This result shows that the interaction between marital_status and Education level are not significant since the p-value for 'Marital_status: Education' are more than 5%.  
+- However, the individual variable by itself are significant as their p-values are less than 5%.  
+  
+#### Run Regression Model
+```{r message= FALSE, warning= FALSE,error=FALSE,max.height='200px'}
+m3<-lm(MntFishProducts~Marital_Status*Education,data=df_regress)
+summary(m3)
+print("Marital_StatusMarried:EducationPhD")
+summary(m3)$coefficients['Marital_StatusMarried:EducationPhD',]
+```
+#### Results Interpretation:
+- Since p-value>0.05, there is insufficient evidence to prove that married PhD candidates have significant relation to amount spent on fish.  
+  
+#### Significant X- Variables with p-value>0.05
+```{r message= FALSE, warning= FALSE,error=FALSE}
+which(summary(m3)$coefficients[,'Pr(>|t|)']<0.05)
+```
+- It seems like Marital Status alone and Education = PhD is a more significant factor in deciding on the amount spent on fish.
+  
+#### Visualisations on Education and Marital Status with Amount Spent on Fish
+```{r message= FALSE, warning= FALSE,error=FALSE}
+
+p1<-df_regress%>%
+  ggplot(aes(x=Education,y=MntFishProducts, fill=Education))+
+  geom_boxplot()+
+  scale_fill_brewer(palette = "Set1")+
+  theme(legend.position = "bottom")+
+  ylim(0,70)
+
+p2<-df_regress%>%
+  ggplot(aes(x=Marital_Status,y=MntFishProducts,fill= Marital_Status))+
+  geom_boxplot()+
+  scale_fill_brewer(palette = "Set1")+
+  theme(legend.position = "bottom")
+
+p3<-df_regress%>%
+  select(Education,MntFishProducts)%>%
+  group_by(Education)%>%
+  summarise(Total_Spent=sum(MntFishProducts))%>%
+  ggplot(aes(x=reorder(Education,-Total_Spent),y=Total_Spent))+
+  geom_col(fill="#666699",width=0.5)+
+  xlab("Education")+
+  scale_y_continuous(name="Total Amount Spent on Fish Products",labels=scales::dollar)+
+  ggtitle("Education & Fish Products")
+
+p4<-df_regress%>%
+  select(Marital_Status,MntFishProducts)%>%
+  group_by(Marital_Status)%>%
+  summarise(Total_Spent=sum(MntFishProducts))%>%
+  ggplot(aes(x=reorder(Marital_Status,-Total_Spent),y=Total_Spent))+
+  geom_col(fill="#666699",width=0.5)+
+  xlab("Marital Status")+
+  scale_y_continuous(name="Total MntFishProducts",labels=scales::dollar)+
+  ggtitle("Marital Status & Fish Products")
+
+p5<-df_regress%>%
+  select(Marital_Status,Education,MntFishProducts)%>%
+  group_by(Marital_Status,Education)%>%
+  summarise(Mean_Spent=mean(MntFishProducts))%>%
+  mutate(Education_Marital= paste0(Education,Marital_Status,sep=","))%>%
+  ggplot() +
+  geom_col(aes(x=Education_Marital,y=Mean_Spent,fill=Education))+
+  xlab("Education & Marital Status")+
+  theme(axis.text.x=element_text(angle=50,hjust=1))+
+  scale_fill_brewer(palette = "Set1")+
+  scale_y_continuous(name="Total MntFishProducts",label=scales::dollar)+
+  ggtitle("Education*Marriage & Fish Products")
+
+grid.arrange(p3,p1,ncol=1)
+
+grid.arrange(p4,p2,ncol=1)
+p5
+```
+  
+#### Observations
+- From the plots above, we can see that Individuals with "Absurd" marital Status spent exceptionally high amounts on Fish Products.
+  
+#### Other Factors that are significant to MntFishProducts
+```{r message= FALSE, warning= FALSE,error=FALSE,max.height='200px'}
+m4<-lm(MntFishProducts~.,data=df_regress1)
+summary(m4)
+```
+#### Retrieve all the X-Variables' p-values & Visualise their significance
+```{r message= FALSE, warning= FALSE,error=FALSE}
+#Retrieve all the p-values
+pvaluedf<-data.frame(summary(m4)$coefficients[,c("Estimate",'Pr(>|t|)')])
+colnames(pvaluedf)<-c('coefficients','pvalue')
+pvaluedf$variables<-rownames(pvaluedf)
+
+#Plot the variables and their significance 
+pvaluedf%>%ggplot(aes(x=reorder(variables,pvalue),y=pvalue))+
+  geom_col(fill="#666699")+
+  theme(axis.text.x=element_text(angle=90,hjust=1))+
+  geom_hline(yintercept=0.05,color="red")+
+  geom_text(aes(x=2,y=0.10),label="5%",color="red")+
+  scale_x_discrete(name="X-Variables")+
+  ggtitle("X-Variables and their P-Values")
+```
+  
+#### Top 5 Variables based on p-value & Visualizations with Y-Variable
+```{r message= FALSE, warning= FALSE,error=FALSE}
+pvaluedf%>%arrange(pvalue)%>%slice(1:5)%>%select(pvalue,coefficients)
+#Visualise the top 5 variables with the y-variable (exclude Education)
+p1<-df_regress%>%ggplot(aes(x=MntFruits ,y=MntFishProducts))+geom_point()
+p2<-df_regress%>%ggplot(aes(x=MntSweetProducts ,y=MntFishProducts))+geom_point()
+p3<-df_regress%>%ggplot(aes(x=MntGoldProds ,y=MntFishProducts))+geom_point()
+p4<-df_regress%>%ggplot(aes(x=MntMeatProducts ,y=MntFishProducts))+geom_point()
+grid.arrange(p1,p2,p3,p4,ncol=4)
+```
+  
+#### Observation:
+- Looking at the coefficients of the regression model, it shows that the Amount Spent on Fish products are positively related to the Amount Spent on Fruits/ Sweet Products/ Gold Products and Meat Products
+  
+### Is there a significant relationship between geographical regional and success of a campaign?
+  
+#### Perform Logistic Regression on all the campaigns with Country
+```{r message= FALSE, warning= FALSE,error=FALSE,max.height='200px'}
+#Campaign 1
+print("Campaign1")
+m5<-glm(AcceptedCmp1~Country,data=df_regress)
+summary(m5)
+#Campaign 2
+print("Campaign2")
+m6<-glm(AcceptedCmp2~Country,data=df_regress)
+summary(m6)
+#Campaign 3
+print("Campaign3")
+m7<-glm(AcceptedCmp3~Country,data=df_regress)
+summary(m7)
+#Campaign 4
+print("Campaign4")
+m8<-glm(AcceptedCmp4~Country,data=df_regress)
+summary(m8)
+#Campaign 5
+print("Campaign5")
+m9<-glm(AcceptedCmp5~Country,data=df_regress)
+summary(m9)
+```
+#### Observation
+- All 5 logistic regression models show that country is not a significant factor in deciding the success of any campaigns. The p-value of all countries are higher than 5% which signifies that there are insufficient evidence to reject the null hypothesis that country have an effect on campaign success.
+  
+#### Visualisations
+```{r message= FALSE, warning= FALSE,error=FALSE}
+df_campaigns<-df_regress%>%
+  select(Country,AcceptedCmp1,AcceptedCmp2,AcceptedCmp3,AcceptedCmp4,AcceptedCmp5)%>%
+  group_by(Country)%>%
+  summarise_all(funs(mean))%>%
+  gather(.,Campaign,Acceptance_rate,"AcceptedCmp1":"AcceptedCmp5")
+
+p1<-df_campaigns%>%
+  ggplot(aes(x=Country,y=Acceptance_rate,fill=Campaign))+
+  geom_col(position="stack",width=0.5)+
+  scale_fill_brewer(palette = "RdGy")+
+  scale_y_continuous(labels=scales::percent)+
+  ggtitle("Acceptance rate of Campaigns across Countries") 
+
+p2<-df_campaigns%>%
+  ggplot(aes(x=Campaign,y=Acceptance_rate,fill=Country))+
+  geom_col(position="stack",width=0.5)+
+  scale_fill_brewer(palette = "RdGy")+
+  scale_y_continuous(labels=scales::percent)+
+  ggtitle("Acceptance rate of Campaigns") 
+ 
+
+grid.arrange(p1,p2,ncol=1)
+```
+  
+#### Observations
+- From the graph above, we can see that the acceptance rate of campaigns 1,3,4,5 throughout all countries (except for ME) are roughly the same. 
+- Campaign 2 have generally low acceptance rate throughout all countries. 
+- This supports the logistic regression models ran above that countries are not the significant factor in deciding success of the campaigns
+
+
+
